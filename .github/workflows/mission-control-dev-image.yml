@@ -1,0 +1,134 @@
+# Builds the image of the Mission Control developer agent from agents/mission-control-dev on native amd64 and arm64
+# runners. Pull requests only build it. Pushes to main publish it to
+# ghcr.io/<owner>/<repository>/mission-control-dev-minimal as `latest` and `sha-<commit>`.
+name: mission-control-dev image
+
+on:
+  pull_request:
+    paths:
+      - agents/mission-control-dev/Dockerfile
+      - agents/mission-control-dev/.dockerignore
+      - agents/mission-control-dev/common/**
+      - .github/workflows/mission-control-dev-image.yml
+  push:
+    branches:
+      - main
+    paths:
+      - agents/mission-control-dev/Dockerfile
+      - agents/mission-control-dev/.dockerignore
+      - agents/mission-control-dev/common/**
+      - .github/workflows/mission-control-dev-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: mission-control-dev-image-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CONTEXT: agents/mission-control-dev
+  TARGET: minimal
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: agents/mission-control-dev
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Name the image
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}/mission-control-dev-${TARGET}" >> "${GITHUB_ENV}"
+
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "${GITHUB_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Build image
+        env:
+          ARCH: ${{ matrix.arch }}
+          PUBLISH: ${{ github.event_name != 'pull_request' }}
+        run: |
+          set -euo pipefail
+          args=(
+            --platform "linux/${ARCH}"
+            --target "${TARGET}"
+            --provenance=false --sbom=false
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+            --label "org.opencontainers.image.description=The image of the Mission Control developer agent"
+            --cache-from "type=registry,ref=${IMAGE}:buildcache-${ARCH}"
+            --metadata-file "${RUNNER_TEMP}/metadata.json"
+          )
+          if [ "${PUBLISH}" = true ]; then
+            args+=(
+              --output "type=image,name=${IMAGE},push-by-digest=true,name-canonical=true,push=true"
+              --cache-to "type=registry,ref=${IMAGE}:buildcache-${ARCH},mode=max,image-manifest=true"
+            )
+          fi
+          docker buildx build "${args[@]}" "${CONTEXT}"
+          if [ "${PUBLISH}" = true ]; then
+            mkdir -p "${RUNNER_TEMP}/digests"
+            jq -r '."containerimage.digest"' "${RUNNER_TEMP}/metadata.json" > "${RUNNER_TEMP}/digests/${ARCH}"
+          fi
+
+      - name: Upload image digest
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Download image digests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digest-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digests
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Login to GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "${GITHUB_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Tag the multi-platform image
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY,,}/mission-control-dev-${TARGET}"
+          docker buildx imagetools create \
+            --tag "${image}:latest" \
+            --tag "${image}:sha-${GITHUB_SHA::10}" \
+            "${image}@$(cat "${RUNNER_TEMP}/digests/amd64")" \
+            "${image}@$(cat "${RUNNER_TEMP}/digests/arm64")"
+          docker buildx imagetools inspect "${image}:latest"

@@ -1,0 +1,65 @@
+# The Mission Control developer agent: Go, Rust, Terraform and a local Kubernetes in kind with cloud-provider-kind, on
+# a checkout of ai-assited-mission-control. Apply it from this directory with `agentctl apply --wait`.
+apiVersion: agents.platform/v1alpha1
+kind: Agent
+metadata:
+  name: mission-control-dev
+spec:
+  sandbox:
+    # Published by .github/workflows/mission-control-dev-image.yml from ../Dockerfile on every push to main.
+    image:
+      type: reference
+      reference: ghcr.io/tjolollm/ai-assited-mission-control/mission-control-dev-minimal:latest
+    platform:
+      os: linux
+    resources:
+      cpu: "4"
+      memory: "8Gi"
+      rootFilesystem:
+        # kind node images, the cluster's own images, Go's module cache and Rust's build output.
+        capacity: "100Gi"
+        mode: direct
+      # To try changes to this agent's own definition in a nested agent. A host without nested KVM starts the agent
+      # without them.
+      nestedSandboxes: preferred
+    initSystem: image
+  instructions:
+    - source: ../instructions.md
+    - source: environment.md
+    - source: ../improving.md
+  skills:
+    - source: ../skills/kind-e2e
+    - source: ../skills/pr-evidence
+  harnesses:
+    - type: claudeCode
+      default: true
+      # Whichever login you stored, whatever its name. Name one in your variant, such as `login: work`, to keep the
+      # agent on it.
+      login: any
+    # The agent starts without Codex when the host has no Codex login. `agentctl codex login` adds it on the next
+    # reconcile.
+    - type: codex
+      login: any
+      optional: true
+  # GITHUB_TOKEN and Git's name and email, from `agentctl github login default`.
+  accounts:
+    - type: github
+      login: default
+  secrets:
+    # For Mission Control's Claude API code and its evals. From
+    # `agentctl secret set anthropic-api-key --hosts api.anthropic.com`. Without it the agent starts, and says which
+    # tests it could not run.
+    - name: anthropic-api-key
+      environment: ANTHROPIC_API_KEY
+      optional: true
+      allowedHosts:
+        - api.anthropic.com
+  access:
+    - type: ssh
+  # kind pulls images from registry.k8s.io, Docker Hub and others, and Go, Cargo and Terraform fetch from their
+  # registries, so the agent reaches every host but the cloud metadata service.
+  network:
+    mode: mediated
+    allow: all
+    deny:
+      - metadata.google.internal

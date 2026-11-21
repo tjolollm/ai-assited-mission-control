@@ -1,0 +1,16 @@
+# Gives the LoadBalancer services and Gateways of every kind cluster on this machine an address, by running an Envoy
+# container for each on the cluster's network. It finds clusters through Podman, so it starts before any exist.
+[Unit]
+Description=cloud-provider-kind, LoadBalancer services for kind clusters
+After=network-online.target podman.socket
+
+[Service]
+User=agent
+Environment=KIND_EXPERIMENTAL_PROVIDER=podman
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/bin/cloud-provider-kind
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

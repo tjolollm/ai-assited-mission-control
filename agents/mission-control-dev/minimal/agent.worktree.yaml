@@ -1,0 +1,21 @@
+apiVersion: agents.platform/v1alpha1
+kind: AgentVariant
+extends: agent.yaml
+
+metadata:
+  name: mission-control-dev-worktree
+
+# Your own checkout of ai-assited-mission-control, the one this file is in, in place of a fresh clone. The agent
+# works on it as it is, on its branch.
+spec:
+  sandbox:
+    mounts:
+      - type: bind
+        source: ../../..
+        target: /home/agent/code/ai-assited-mission-control
+        readOnly: false
+  instructions:
+    - source: ../instructions.md
+    - source: environment.md
+    - source: ../improving.md
+    - source: ../worktree.md
