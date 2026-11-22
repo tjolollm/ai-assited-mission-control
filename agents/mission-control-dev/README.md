@@ -32,7 +32,13 @@ it: they belong in `agentctl github login` and `agentctl secret set`.
 
 ## Inside the agent
 
-[`instructions.md`](instructions.md), [`minimal/environment.md`](minimal/environment.md) and
-[`improving.md`](improving.md) are its instructions, with [`worktree.md`](worktree.md) on the `worktree` variant. Its
-skills are [`kind-e2e`](skills/kind-e2e/SKILL.md), for end-to-end tests on kind, and
-[`pr-evidence`](skills/pr-evidence/SKILL.md), for what its pull requests show.
+[`instructions.md`](instructions.md), [`minimal/environment.md`](minimal/environment.md),
+[`token-savers.md`](token-savers.md) and [`improving.md`](improving.md) are its instructions, with
+[`worktree.md`](worktree.md) on the `worktree` variant. Its skills are [`kind-e2e`](skills/kind-e2e/SKILL.md), for
+end-to-end tests on kind, and [`pr-evidence`](skills/pr-evidence/SKILL.md), for what its pull requests show.
+
+To save tokens, every Claude Code session runs [rtk](https://github.com/rtk-ai/rtk), which condenses the output of its
+shell commands, and the [Ponytail](https://github.com/DietrichGebert/ponytail) plugin, which keeps the code it writes
+small. The image installs both, pinned in the [`Dockerfile`](Dockerfile), and
+[`home/.claude/settings.json`](home/.claude/settings.json) turns them on. The empty
+`home/.claude/.ponytail-statusline-nudged` stops Ponytail from asking to replace the platform's status line.

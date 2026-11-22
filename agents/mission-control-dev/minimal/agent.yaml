@@ -23,9 +23,13 @@ spec:
       # without them.
       nestedSandboxes: preferred
     initSystem: image
+  # Claude Code's settings, which turn on rtk and Ponytail from the image.
+  home:
+    source: ../home
   instructions:
     - source: ../instructions.md
     - source: environment.md
+    - source: ../token-savers.md
     - source: ../improving.md
   skills:
     - source: ../skills/kind-e2e
