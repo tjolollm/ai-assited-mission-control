@@ -63,8 +63,9 @@ func TestPortFromEnv(t *testing.T) {
 			t.Errorf("portFromEnv(%q) = %d, %v; want %d, nil", value, got, err, want)
 		}
 	}
-	// A service name, a host:port, trailing junk or an out-of-range number is an error, as in hello-rust.
-	for _, value := range []string{"http", "1.2.3.4:80", "8080x", "65536", "-1"} {
+	// A service name, a host:port, trailing junk, a sign or an out-of-range number is an error; hello-rust's
+	// port_from_env_rejects_what_hello_go_rejects tests the same list.
+	for _, value := range []string{"http", "1.2.3.4:80", "8080x", "65536", "-1", "+8080", " 8080"} {
 		if got, err := portFromEnv(value); err == nil {
 			t.Errorf("portFromEnv(%q) = %d, nil; want an error", value, got)
 		}

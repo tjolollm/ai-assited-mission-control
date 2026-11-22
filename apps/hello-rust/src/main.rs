@@ -23,11 +23,21 @@ async fn main() -> io::Result<()> {
     }
 }
 
-/// Resolves on SIGTERM, which kubelet sends to stop a pod, or on SIGINT.
+/// Resolves on SIGTERM, which kubelet sends to stop a pod, or on SIGINT. A second signal during the shutdown exits at
+/// once, as hello-go does, rather than wait out the grace period: tokio keeps its handlers installed for the life of
+/// the process, so without this it would swallow the second Ctrl-C.
 async fn shutdown_signal(mut term: Signal, mut int: Signal) {
     tokio::select! {
         _ = term.recv() => {},
         _ = int.recv() => {},
     }
     println!("hello-rust shutting down");
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = term.recv() => {},
+            _ = int.recv() => {},
+        }
+        eprintln!("hello-rust: second signal, exiting now");
+        std::process::exit(1);
+    });
 }

@@ -100,6 +100,9 @@ func main() {
 	// SIGTERM is how kubelet stops a pod. Registered before listening, so no signal goes unhandled.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
+	// Once the first signal has started the shutdown, restore the default handling, so a second Ctrl-C ends the
+	// process at once instead of waiting out the grace period.
+	context.AfterFunc(ctx, stop)
 
 	ln, err := net.Listen("tcp", ":"+strconv.Itoa(int(port)))
 	if err != nil {

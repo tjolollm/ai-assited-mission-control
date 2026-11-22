@@ -36,10 +36,14 @@ async fn hello() -> Json<Greeting> {
     })
 }
 
-/// The port to listen on, from the value of `PORT`: unset or empty means [`DEFAULT_PORT`], as in hello-go.
+/// The port to listen on, from the value of `PORT`: unset or empty means [`DEFAULT_PORT`]. Like hello-go's
+/// `strconv.ParseUint`, it takes decimal digits only, so not the leading `+` that `u16::from_str` would allow.
 pub fn port_from_env(value: Option<&str>) -> Result<u16, String> {
     match value {
         None | Some("") => Ok(DEFAULT_PORT),
+        Some(p) if !p.bytes().all(|b| b.is_ascii_digit()) => {
+            Err(format!("PORT={p:?}: not a decimal port number"))
+        }
         Some(p) => p.parse().map_err(|e| format!("PORT={p:?}: {e}")),
     }
 }
@@ -70,6 +74,10 @@ fn bind(domain: Domain, addr: SocketAddr, dual_stack: bool) -> io::Result<Socket
 /// Serves `app` on `listener` until `shutdown` resolves, then stops taking connections and gives the requests in flight
 /// up to `grace` to finish. Returns `Ok` when every request finished, an error of kind `TimedOut` when the grace ran
 /// out first, or the error that stopped the server before the shutdown.
+///
+/// Unlike hello-go's `serve`, this does not close the connections still open on `TimedOut`: axum runs each in a task
+/// of its own and gives no handle to them. They end when the runtime shuts down, which in `main` is as it returns
+/// that error. A caller that keeps the runtime running afterwards keeps them too.
 pub async fn serve(
     listener: TcpListener,
     app: Router,
@@ -168,7 +176,26 @@ mod tests {
         assert_eq!(port_from_env(None), Ok(DEFAULT_PORT));
         assert_eq!(port_from_env(Some("")), Ok(DEFAULT_PORT));
         assert_eq!(port_from_env(Some("9000")), Ok(9000));
-        assert!(port_from_env(Some("http")).is_err());
+        assert_eq!(port_from_env(Some("0")), Ok(0));
+    }
+
+    #[test]
+    fn port_from_env_rejects_what_hello_go_rejects() {
+        // The same cases as hello-go's TestPortFromEnv, plus the leading `+` that u16::from_str alone would take.
+        for value in [
+            "http",
+            "1.2.3.4:80",
+            "8080x",
+            "65536",
+            "-1",
+            "+8080",
+            " 8080",
+        ] {
+            assert!(
+                port_from_env(Some(value)).is_err(),
+                "port_from_env({value:?}) should be an error"
+            );
+        }
     }
 
     #[tokio::test]

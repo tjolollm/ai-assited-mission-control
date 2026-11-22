@@ -20,6 +20,14 @@ spec:
           # hack/e2e-kind.sh replaces the tag with one unique to each build.
           image: localhost/hello-go:e2e
           imagePullPolicy: Never
+          lifecycle:
+            # Keep serving for 5s after the pod is marked for deletion, while kube-proxy and the LoadBalancer stop
+            # sending it new connections; only then does SIGTERM start the app's own shutdown. Without this, rollouts
+            # dropped about 1% of requests. sleep, not exec: the distroless image has no shell. 5s plus the app's 10s
+            # shutdown grace fits the default terminationGracePeriodSeconds of 30.
+            preStop:
+              sleep:
+                seconds: 5
           ports:
             - name: http
               containerPort: 8080

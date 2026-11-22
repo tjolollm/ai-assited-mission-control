@@ -6,9 +6,10 @@ Two small web services that answer `GET /` with the same JSON body, byte for byt
 {"message":"hello, world"}
 ```
 
-Any other path answers `404`, and any other method on `/` answers `405`. Both listen on port `8080`, or on `PORT` when
-it is set and not empty. On `SIGTERM` or `SIGINT` they stop taking connections, give the requests in flight up to 10s
-to finish, and exit.
+Any other path answers `404`, and any other method on `/` answers `405`. Both listen on port `8080`, or on `PORT`
+(decimal digits only) when it is set and not empty. On `SIGTERM` or `SIGINT` they stop taking connections, give the
+requests in flight up to 10s to finish, and exit; a second signal exits at once. In Kubernetes a 5s `preStop` sleep
+comes first, so the LoadBalancer stops routing to a pod before it stops listening.
 
 | App | Language | Stack |
 | --- | --- | --- |
@@ -40,9 +41,11 @@ address. It needs kind, kubectl, a container engine, and
 [cloud-provider-kind](https://github.com/kubernetes-sigs/cloud-provider-kind) to give the services their addresses.
 
 ```sh
-hack/e2e-kind.sh                  # cluster e2e-<checkout directory>-<hash>, created and deleted by the script
-KEEP_CLUSTER=1 hack/e2e-kind.sh   # keep the cluster it created, to poke around
-CLUSTER=mine hack/e2e-kind.sh     # use an existing cluster, which the script leaves in place
+hack/e2e-kind.sh                  # cluster e2e-<checkout directory>-<hash>, deleted afterwards
+KEEP_CLUSTER=1 hack/e2e-kind.sh   # keep that cluster, to poke around; a later plain run reuses and deletes it
+CLUSTER=mine hack/e2e-kind.sh     # cluster mine: created and deleted if missing, reused and kept if it exists
 ```
+
+The two manifests in `deploy/kind/` must stay identical apart from the app name; the script checks that first.
 
 An app that fails is reported with its pod description and logs, and the script still checks the others.
