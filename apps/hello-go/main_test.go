@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -23,12 +24,17 @@ func TestHelloReturnsJSONGreeting(t *testing.T) {
 	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type = %q, want %q", ct, "application/json")
 	}
-	var got Greeting
-	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
-		t.Fatalf("decoding body: %v", err)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading body: %v", err)
 	}
-	if got.Message != "hello, world" {
-		t.Errorf("message = %q, want %q", got.Message, "hello, world")
+	// Byte for byte the same body as hello-rust sends.
+	if want := `{"message":"hello, world"}`; string(body) != want {
+		t.Errorf("body = %q, want %q", body, want)
+	}
+	var got Greeting
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decoding body: %v", err)
 	}
 }
 

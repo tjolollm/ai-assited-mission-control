@@ -50,8 +50,8 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(resp.headers()[header::CONTENT_TYPE], "application/json");
         let body = resp.into_body().collect().await.unwrap().to_bytes();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json, serde_json::json!({ "message": "hello, world" }));
+        // Byte for byte the same body as hello-go sends.
+        assert_eq!(&body[..], br#"{"message":"hello, world"}"#);
     }
 
     #[tokio::test]
