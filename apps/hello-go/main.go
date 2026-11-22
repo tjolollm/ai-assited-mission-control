@@ -4,18 +4,23 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 )
 
 // helloBody is the response to GET /, byte for byte the one hello-rust sends.
 const helloBody = `{"message":"hello, world"}`
+
+// defaultPort is the port the service listens on when PORT is unset or empty.
+const defaultPort = 8080
 
 // shutdownGrace is how long requests in flight get to finish after SIGTERM, well inside kubelet's default grace
 // period of 30s.
@@ -26,6 +31,31 @@ func newHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", hello)
 	return mux
+}
+
+// portFromEnv returns the port to listen on, from the value of PORT: unset or empty means defaultPort. Like hello-rust,
+// it takes only a decimal port number, not a service name or a host:port.
+func portFromEnv(value string) (uint16, error) {
+	if value == "" {
+		return defaultPort, nil
+	}
+	port, err := strconv.ParseUint(value, 10, 16)
+	if err != nil {
+		return 0, fmt.Errorf("PORT=%q: %w", value, err)
+	}
+	return uint16(port), nil
+}
+
+// newServer returns the HTTP server for handler, with timeouts that keep slow or abandoned connections from holding
+// goroutines and file descriptors for the life of the process.
+func newServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 }
 
 func hello(w http.ResponseWriter, _ *http.Request) {
@@ -48,6 +78,7 @@ func serve(ctx context.Context, srv *http.Server, ln net.Listener, grace time.Du
 	case <-ctx.Done():
 	}
 
+	log.Print("hello-go shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), grace)
 	defer cancel()
 	err := srv.Shutdown(shutdownCtx)
@@ -62,26 +93,19 @@ func serve(ctx context.Context, srv *http.Server, ln net.Listener, grace time.Du
 }
 
 func main() {
-	addr := ":8080"
-	if port := os.Getenv("PORT"); port != "" {
-		addr = ":" + port
-	}
-	ln, err := net.Listen("tcp", addr)
+	port, err := portFromEnv(os.Getenv("PORT"))
 	if err != nil {
 		log.Fatal(err)
 	}
-	srv := &http.Server{
-		Handler:           newHandler(),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	// SIGTERM is how kubelet stops a pod.
+	// SIGTERM is how kubelet stops a pod. Registered before listening, so no signal goes unhandled.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
-	go func() {
-		<-ctx.Done()
-		log.Print("hello-go shutting down")
-	}()
+
+	ln, err := net.Listen("tcp", ":"+strconv.Itoa(int(port)))
+	if err != nil {
+		log.Fatal(err)
+	}
+	srv := newServer(newHandler())
 
 	log.Printf("hello-go listening on %s", ln.Addr())
 	switch err := serve(ctx, srv, ln, shutdownGrace); {

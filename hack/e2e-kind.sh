@@ -21,8 +21,15 @@ CTX="kind-${CLUSTER}"
 APPS=(hello-go hello-rust)
 WANT='{"message":"hello, world"}'
 
+# Tag each build with its image ID, so the deployment names exactly the image just built: a new build changes the pod
+# template and rolls the pods, and an unchanged one leaves pods that already run it.
+declare -A IMAGE
 for app in "${APPS[@]}"; do
   docker build -t "localhost/${app}:e2e" "apps/${app}"
+  id="$(docker image inspect -f '{{.Id}}' "localhost/${app}:e2e")"
+  id="${id#sha256:}"
+  IMAGE[${app}]="localhost/${app}:e2e-${id:0:12}"
+  docker tag "localhost/${app}:e2e" "${IMAGE[${app}]}"
 done
 
 # Read the list whole before searching it: with pipefail, grep -q quitting at its first match could fail the pipe.
@@ -30,21 +37,22 @@ clusters="$(kind get clusters 2>/dev/null)"
 if grep -qx "${CLUSTER}" <<<"${clusters}"; then
   echo "Reusing cluster ${CLUSTER}, which this script did not create and will not delete."
 else
-  kind create cluster --name "${CLUSTER}" --wait 180s
+  # Set before creating, so a create that is interrupted or fails part way leaves nothing behind for a later run to
+  # mistake for a cluster someone made.
   if [[ "${KEEP_CLUSTER:-0}" != 1 ]]; then
     trap 'kind delete cluster --name "${CLUSTER}"' EXIT
   fi
+  kind create cluster --name "${CLUSTER}" --wait 180s
 fi
 
 for app in "${APPS[@]}"; do
-  kind load docker-image "localhost/${app}:e2e" --name "${CLUSTER}"
-  existed=0
-  kubectl --context "${CTX}" get "deployment/${app}" >/dev/null 2>&1 && existed=1
-  kubectl --context "${CTX}" apply -f "deploy/kind/${app}.yaml"
-  if ((existed)); then
-    # Pick up the image just loaded, which the running pods have under the same tag.
-    kubectl --context "${CTX}" rollout restart "deployment/${app}"
+  kind load docker-image "${IMAGE[${app}]}" --name "${CLUSTER}"
+  manifest="$(sed "s#image: localhost/${app}:e2e\$#image: ${IMAGE[${app}]}#" "deploy/kind/${app}.yaml")"
+  if ! grep -qF "image: ${IMAGE[${app}]}" <<<"${manifest}"; then
+    echo "deploy/kind/${app}.yaml does not name image localhost/${app}:e2e for the script to replace" >&2
+    exit 1
   fi
+  kubectl --context "${CTX}" apply -f - <<<"${manifest}"
 done
 
 # Shows why an app failed, before the cluster goes away.
@@ -64,16 +72,19 @@ for app in "${APPS[@]}"; do
     continue
   fi
   ip="$(kubectl --context "${CTX}" get service "${app}" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')"
+  # An IPv6 address goes in brackets in a URL.
+  if [[ "${ip}" == *:* ]]; then url="http://[${ip}]/"; else url="http://${ip}/"; fi
   body=""
   for _ in $(seq 30); do
-    body="$(curl -fsS "http://${ip}/" 2>/dev/null)" && break
+    # Bounded, so an address that drops packets costs seconds per try rather than the kernel's connect timeout.
+    body="$(curl -fsSg --connect-timeout 2 --max-time 5 "${url}" 2>/dev/null)" && break
     sleep 2
   done
   # Compare the raw bytes: both apps send exactly the same body.
   if [[ "${body}" == "${WANT}" ]]; then
-    echo "PASS ${app} http://${ip}/ -> ${body}"
+    echo "PASS ${app} ${url} -> ${body}"
   else
-    echo "FAIL ${app} http://${ip}/ -> ${body:-<no response>}"
+    echo "FAIL ${app} ${url} -> ${body:-<no response>}"
     diagnose "${app}"
     failed+=("${app}")
   fi

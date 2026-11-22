@@ -57,6 +57,34 @@ func TestRoutes(t *testing.T) {
 	}
 }
 
+func TestPortFromEnv(t *testing.T) {
+	for value, want := range map[string]uint16{"": defaultPort, "9000": 9000, "0": 0} {
+		if got, err := portFromEnv(value); err != nil || got != want {
+			t.Errorf("portFromEnv(%q) = %d, %v; want %d, nil", value, got, err, want)
+		}
+	}
+	// A service name, a host:port, trailing junk or an out-of-range number is an error, as in hello-rust.
+	for _, value := range []string{"http", "1.2.3.4:80", "8080x", "65536", "-1"} {
+		if got, err := portFromEnv(value); err == nil {
+			t.Errorf("portFromEnv(%q) = %d, nil; want an error", value, got)
+		}
+	}
+}
+
+func TestNewServerSetsTimeouts(t *testing.T) {
+	srv := newServer(newHandler())
+	for name, d := range map[string]time.Duration{
+		"ReadHeaderTimeout": srv.ReadHeaderTimeout,
+		"ReadTimeout":       srv.ReadTimeout,
+		"WriteTimeout":      srv.WriteTimeout,
+		"IdleTimeout":       srv.IdleTimeout,
+	} {
+		if d <= 0 {
+			t.Errorf("%s = %s, want a positive timeout", name, d)
+		}
+	}
+}
+
 // startServe runs serve with handler on a local port and returns the URL, the cancel that triggers the shutdown, and a
 // channel that yields serve's result.
 func startServe(t *testing.T, handler http.Handler, grace time.Duration) (string, context.CancelFunc, <-chan error) {

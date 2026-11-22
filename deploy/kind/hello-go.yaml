@@ -17,6 +17,7 @@ spec:
       containers:
         - name: hello-go
           # Built locally and loaded with `kind load docker-image`; Podman names local images localhost/<name>.
+          # hack/e2e-kind.sh replaces the tag with one unique to each build.
           image: localhost/hello-go:e2e
           imagePullPolicy: Never
           ports:

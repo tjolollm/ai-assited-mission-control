@@ -91,6 +91,8 @@ pub async fn serve(
         }
     };
     tokio::select! {
+        // When the server finishes on the same poll as the deadline, every request did finish: report that.
+        biased;
         result = server => result,
         () = deadline => Err(io::Error::new(
             io::ErrorKind::TimedOut,
