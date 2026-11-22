@@ -3,9 +3,10 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,22 +14,12 @@ import (
 	"time"
 )
 
-// Greeting is the body of the response to GET /.
-type Greeting struct {
-	Message string `json:"message"`
-}
+// helloBody is the response to GET /, byte for byte the one hello-rust sends.
+const helloBody = `{"message":"hello, world"}`
 
-// helloBody is the encoded greeting, without the trailing newline json.Encoder would add, so the body is byte for
-// byte the one hello-rust sends.
-var helloBody = mustMarshal(Greeting{Message: "hello, world"})
-
-func mustMarshal(v any) []byte {
-	b, err := json.Marshal(v)
-	if err != nil {
-		panic(err)
-	}
-	return b
-}
+// shutdownGrace is how long requests in flight get to finish after SIGTERM, well inside kubelet's default grace
+// period of 30s.
+const shutdownGrace = 10 * time.Second
 
 // newHandler returns the routes of the service: GET / answers with the greeting, and any other path is not found.
 func newHandler() http.Handler {
@@ -39,9 +30,35 @@ func newHandler() http.Handler {
 
 func hello(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if _, err := w.Write(helloBody); err != nil {
+	if _, err := io.WriteString(w, helloBody); err != nil {
 		log.Printf("writing response: %v", err)
 	}
+}
+
+// serve runs srv on ln until ctx is done, then stops taking connections and gives the requests in flight up to grace
+// to finish, closing any still open after that. It returns once the shutdown is complete: nil when every request
+// finished, context.DeadlineExceeded when some were cut off, or the error that stopped the server before ctx was done.
+func serve(ctx context.Context, srv *http.Server, ln net.Listener, grace time.Duration) error {
+	errc := make(chan error, 1)
+	go func() { errc <- srv.Serve(ln) }()
+
+	select {
+	case err := <-errc:
+		return err
+	case <-ctx.Done():
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), grace)
+	defer cancel()
+	err := srv.Shutdown(shutdownCtx)
+	if err != nil {
+		// The deadline passed with requests still running; drop their connections.
+		_ = srv.Close()
+	}
+	if serveErr := <-errc; !errors.Is(serveErr, http.ErrServerClosed) {
+		return serveErr
+	}
+	return err
 }
 
 func main() {
@@ -49,27 +66,28 @@ func main() {
 	if port := os.Getenv("PORT"); port != "" {
 		addr = ":" + port
 	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatal(err)
+	}
 	srv := &http.Server{
-		Addr:              addr,
 		Handler:           newHandler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	// On SIGTERM, which kubelet sends to stop a pod, or SIGINT, finish the requests in flight and exit.
+	// SIGTERM is how kubelet stops a pod.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
 	go func() {
 		<-ctx.Done()
 		log.Print("hello-go shutting down")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			log.Printf("shutdown: %v", err)
-		}
 	}()
 
-	log.Printf("hello-go listening on %s", addr)
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	log.Printf("hello-go listening on %s", ln.Addr())
+	switch err := serve(ctx, srv, ln, shutdownGrace); {
+	case errors.Is(err, context.DeadlineExceeded):
+		log.Printf("shutdown: requests still running after %s were cut off", shutdownGrace)
+	case err != nil:
 		log.Fatal(err)
 	}
 }

@@ -7,7 +7,8 @@ Two small web services that answer `GET /` with the same JSON body, byte for byt
 ```
 
 Any other path answers `404`, and any other method on `/` answers `405`. Both listen on port `8080`, or on `PORT` when
-it is set. On `SIGTERM` or `SIGINT` they finish the requests in flight and exit.
+it is set and not empty. On `SIGTERM` or `SIGINT` they stop taking connections, give the requests in flight up to 10s
+to finish, and exit.
 
 | App | Language | Stack |
 | --- | --- | --- |
@@ -35,11 +36,11 @@ below. The Rust toolchain is pinned in [`hello-rust/rust-toolchain.toml`](hello-
 
 [`hack/e2e-kind.sh`](../hack/e2e-kind.sh) builds both images, loads them into a kind cluster, deploys them from
 [`deploy/kind/`](../deploy/kind) behind `LoadBalancer` services, and checks each one's response at its LoadBalancer
-address. It needs kind, kubectl, jq, a container engine, and
+address. It needs kind, kubectl, a container engine, and
 [cloud-provider-kind](https://github.com/kubernetes-sigs/cloud-provider-kind) to give the services their addresses.
 
 ```sh
-hack/e2e-kind.sh                  # cluster e2e-<checkout directory>, created and deleted by the script
+hack/e2e-kind.sh                  # cluster e2e-<checkout directory>-<hash>, created and deleted by the script
 KEEP_CLUSTER=1 hack/e2e-kind.sh   # keep the cluster it created, to poke around
 CLUSTER=mine hack/e2e-kind.sh     # use an existing cluster, which the script leaves in place
 ```

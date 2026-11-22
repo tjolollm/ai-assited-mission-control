@@ -1,32 +1,20 @@
-use std::{env, io, net::Ipv6Addr};
+use std::{env, io};
 
-use tokio::{
-    net::TcpListener,
-    signal::unix::{SignalKind, signal},
-};
+use hello_rust::{SHUTDOWN_GRACE, app, listen, port_from_env, serve};
+use tokio::signal::unix::{SignalKind, signal};
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    let port: u16 = env::var("PORT")
-        .ok()
-        .map(|p| p.parse())
-        .transpose()
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, format!("PORT: {e}")))?
-        .unwrap_or(8080);
-    let listener = listen(port).await?;
+    let port = port_from_env(env::var("PORT").ok().as_deref())
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    let listener = listen(port)?;
     println!("hello-rust listening on {}", listener.local_addr()?);
-    axum::serve(listener, hello_rust::app())
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-}
-
-/// Listens on all addresses, IPv6 and IPv4, as Go's `:PORT` does, and falls back to IPv4 alone where the host has no
-/// IPv6.
-async fn listen(port: u16) -> io::Result<TcpListener> {
-    match TcpListener::bind((Ipv6Addr::UNSPECIFIED, port)).await {
-        Ok(listener) => Ok(listener),
-        Err(e) if e.kind() == io::ErrorKind::AddrInUse => Err(e),
-        Err(_) => TcpListener::bind(("0.0.0.0", port)).await,
+    match serve(listener, app(), shutdown_signal(), SHUTDOWN_GRACE).await {
+        Err(e) if e.kind() == io::ErrorKind::TimedOut => {
+            eprintln!("shutdown: {e}");
+            Ok(())
+        }
+        result => result,
     }
 }
 

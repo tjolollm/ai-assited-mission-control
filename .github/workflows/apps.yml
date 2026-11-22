@@ -73,10 +73,10 @@ jobs:
           persist-credentials: false
 
       - name: Set up Rust
-        # Installs the toolchain that rust-toolchain.toml names, which cargo then selects from that file.
+        # With no arguments, rustup (1.28 or later) installs the toolchain and components rust-toolchain.toml names.
         run: |
-          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
-          rustup toolchain install "${channel}" --profile minimal --component clippy,rustfmt
+          rustup toolchain install
+          rustup show active-toolchain
 
       - name: Build
         run: cargo build --locked
