@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-go
+  labels:
+    app: hello-go
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hello-go
+  template:
+    metadata:
+      labels:
+        app: hello-go
+    spec:
+      containers:
+        - name: hello-go
+          # Built locally and loaded with `kind load docker-image`; Podman names local images localhost/<name>.
+          image: localhost/hello-go:e2e
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-go
+  labels:
+    app: hello-go
+spec:
+  type: LoadBalancer
+  selector:
+    app: hello-go
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
