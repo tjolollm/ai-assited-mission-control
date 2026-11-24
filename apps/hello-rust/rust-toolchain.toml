@@ -1,0 +1,6 @@
+# The Rust toolchain for hello-rust, read by cargo and by CI (.github/workflows/apps.yml). Move the rust image tag in
+# Dockerfile and RUST_VERSION in agents/mission-control-dev/Dockerfile with it.
+[toolchain]
+channel = "1.100.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

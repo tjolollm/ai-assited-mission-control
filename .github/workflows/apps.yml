@@ -1,0 +1,139 @@
+# Builds, tests and lints the hello-world apps in apps/, then builds their images and runs them end to end on kind with
+# hack/e2e-kind.sh. The Go and Rust versions come from go.mod and rust-toolchain.toml; they, golangci-lint, kind and
+# cloud-provider-kind match the ARGs in agents/mission-control-dev/Dockerfile, so move them together.
+name: apps
+
+on:
+  pull_request:
+    paths:
+      - apps/**
+      - deploy/**
+      - hack/**
+      - .github/workflows/apps.yml
+  push:
+    branches:
+      - main
+    paths:
+      - apps/**
+      - deploy/**
+      - hack/**
+      - .github/workflows/apps.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apps-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  go:
+    name: Go (hello-go)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/hello-go
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: apps/hello-go/go.mod
+          # Caches the build cache too; with no go.sum, go.mod keys it.
+          cache-dependency-path: apps/hello-go/go.mod
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.15.0
+          working-directory: apps/hello-go
+
+  rust:
+    name: Rust (hello-rust)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/hello-rust
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust
+        # With no arguments, rustup (1.28 or later) installs the toolchain and components rust-toolchain.toml names.
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+
+      - name: Cache cargo registry and build output
+        # After the toolchain is set up, as the cache key includes the rustc version.
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: apps/hello-rust
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Format
+        run: cargo fmt --check
+
+  e2e:
+    name: End-to-end on kind
+    needs: [go, rust]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      KIND_VERSION: 0.33.0
+      KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
+      CLOUD_PROVIDER_KIND_VERSION: 0.12.0
+      CLOUD_PROVIDER_KIND_SHA256: 5716aca8f01a85172c12f3b6329c70f151bec02c91b6f600c9f230845ee138e6
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install kind and cloud-provider-kind
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          fetch() { curl -fsSL "$1" -o "${tmp}/$2" && echo "$3  ${tmp}/$2" | sha256sum -c -; }
+          fetch "https://github.com/kubernetes-sigs/kind/releases/download/v${KIND_VERSION}/kind-linux-amd64" kind "${KIND_SHA256}"
+          sudo install -m 0755 "${tmp}/kind" /usr/local/bin/kind
+          fetch "https://github.com/kubernetes-sigs/cloud-provider-kind/releases/download/v${CLOUD_PROVIDER_KIND_VERSION}/cloud-provider-kind_${CLOUD_PROVIDER_KIND_VERSION}_linux_amd64.tar.gz" \
+            cloud-provider-kind.tar.gz "${CLOUD_PROVIDER_KIND_SHA256}"
+          sudo tar -xzf "${tmp}/cloud-provider-kind.tar.gz" -C /usr/local/bin cloud-provider-kind
+          kind version
+
+      - name: Start cloud-provider-kind
+        # Gives the LoadBalancer services of kind clusters an address on Docker's kind network, which the runner reaches.
+        run: nohup cloud-provider-kind > "${RUNNER_TEMP}/cloud-provider-kind.log" 2>&1 &
+
+      - name: Run end-to-end tests
+        env:
+          CLUSTER: e2e
+        run: hack/e2e-kind.sh
+
+      - name: Show cloud-provider-kind log
+        if: failure()
+        run: tail -n 100 "${RUNNER_TEMP}/cloud-provider-kind.log"
